@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>キャッシュレス決済</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+            background-color: #f4f5f7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .pay-card {
+            width: 100%;
+            max-width: 360px;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            overflow: hidden;
+            text-align: center;
+        }
+        .brand-header {
+            background: linear-gradient(135deg, #ff0033, #ff4d00);
+            color: white;
+            padding: 18px;
+            font-weight: bold;
+            font-size: 16px;
+            letter-spacing: 1px;
+        }
+        .main-content { padding: 35px 24px; }
+        
+        /* 1. 初期状態：支払いボタン */
+        .btn-pay {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #ff0033, #ff4d00);
+            color: white;
+            border: none;
+            border-radius: 30px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(212, 0, 15, 0.3);
+        }
+        .current-balance-info {
+            font-size: 15px;
+            color: #666;
+            margin-bottom: 25px;
+        }
+        .current-balance-info span {
+            font-weight: bold;
+            color: #111;
+            font-size: 18px;
+        }
+
+        /* 2. 読み取り中状態：ローディング */
+        .loading-dots {
+            font-size: 18px;
+            color: #555;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+        .radar {
+            width: 80px;
+            height: 80px;
+            border: 4px solid #ff0033;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+
+        /* 3. 完了状態 */
+        .success-icon {
+            width: 70px;
+            height: 70px;
+            background: #e6f9ec;
+            color: #07b53b;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 36px;
+            margin: 0 auto 20px;
+            font-weight: bold;
+        }
+        .status-msg { font-size: 18px; color: #222; font-weight: bold; margin-bottom: 15px; }
+        .amount-box { font-size: 42px; font-weight: 800; color: #111; margin-bottom: 25px; }
+        .amount-box span { font-size: 22px; font-weight: bold; margin-left: 2px; }
+        
+        .balance-box {
+            background-color: #f8fafc;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #edf2f7;
+        }
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* アニメーション用キーフレーム */
+        @keyframes pulse {
+            0% { transform: scale(0.6); opacity: 0.1; }
+            50% { opacity: 1; }
+            100% { transform: scale(1.2); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="pay-card">
+        <div class="brand-header">NFC NET PAY</div>
+        
+        <!-- 【状態①】初期画面（ボタンを押す前） -->
+        <div class="main-content" id="viewInitial">
+            <div class="current-balance-info">現在の残高: <span id="initBalanceText">5,000円</span></div>
+            <button class="btn-pay" id="startPayBtn">支払いをする</button>
+        </div>
+
+        <!-- 【状態②】読み取り中画面 -->
+        <div class="main-content" id="viewScanning" style="display: none;">
+            <div class="radar"></div>
+            <p class="loading-dots">NFCタグを読み取っています…</p>
+            <p style="font-size: 13px; color: #888; margin-top: 10px;">スマホの背面をタグにかざしてください</p>
+        </div>
+
+        <!-- 【状態③】支払い完了画面 -->
+        <div class="main-content" id="viewSuccess" style="display: none;">
+            <div class="success-icon">✓</div>
+            <p class="status-msg" id="successMsg">〇〇円を支払いました</p>
+            
+            <div class="amount-box" id="payAmount">0<span>円</span></div>
+            
+            <div class="balance-box">
+                <div class="balance-row">
+                    <span>現在の残高</span>
+                    <span id="finalBalance" style="font-weight: bold; color: #07b53b;">0円</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // お客さんの所持金（初期残高）
+        let userBalance = 5000;
+
+        // 画面要素の取得
+        const viewInitial = document.getElementById('viewInitial');
+        const viewScanning = document.getElementById('viewScanning');
+        const viewSuccess = document.getElementById('viewSuccess');
+        
+        const startPayBtn = document.getElementById('startPayBtn');
+        const successMsg = document.getElementById('successMsg');
+        const payAmountText = document.getElementById('payAmount');
+        const finalBalanceText = document.getElementById('finalBalance');
+
+        // 初期残高の表示
+        document.getElementById('initBalanceText').innerText = userBalance.toLocaleString() + '円';
+
+        // 「支払いをする」ボタンを押したときの処理
+        startPayBtn.addEventListener('click', async () => {
+            
+            // Web NFCに対応しているか確認
+            if (!('NDEFReader' in window)) {
+                alert("❌ エラー: このブラウザはNFC読み取りに対応していません。AndroidのChrome等でお試しください。");
+                return;
+            }
+
+            // 状態①から状態②（読み取り中）へ画面を切り替える
+            viewInitial.style.display = 'none';
+            viewScanning.style.display = 'block';
+
+            try {
+                const ndef = new NDEFReader();
+                await ndef.scan(); // スマホのNFCリーダーを起動
+
+                // タグが感知されたら実行されるイベント
+                ndef.onreading = event => {
+                    const decoder = new TextDecoder();
+                    
+                    for (const record of event.message.records) {
+                        // タグ内にURLデータ（金額パラメータ付き）が入っているかチェック
+                        if (record.recordType === "url") {
+                            const rawUrl = decoder.decode(record.data);
+                            
+                            // URLから「?amt=1500」などの金額部分を抽出する
+                            const urlObj = new URL(rawUrl);
+                            const amountParam = urlObj.searchParams.get('amt');
+
+                            if (amountParam && !isNaN(amountParam)) {
+                                const cost = parseInt(amountParam, 10);
+                                
+                                // 残高計算
+                                userBalance = userBalance - cost;
+
+                                // 完了画面にテキストをセット
+                                successMsg.innerText = `${cost.toLocaleString()}円を支払いました。`;
+                                payAmountText.innerHTML = cost.toLocaleString() + '<span>円</span>';
+                                finalBalanceText.innerText = userBalance.toLocaleString() + '円';
+
+                                // 状態②から状態③（支払い完了）へ画面を切り替える
+                                viewScanning.style.display = 'none';
+                                viewSuccess.style.display = 'block';
+                                return; // 処理終了
+                            }
+                        }
+                    }
+                    // URLや金額データが含まれていなかった場合
+                    alert("有効な決済データがNFCタグから見つかりませんでした。");
+                    resetView();
+                };
+
+            } catch (error) {
+                alert("読み取りに失敗しました: " + error.message);
+                resetView();
+            }
+        });
+
+        // エラー時に初期状態に戻す関数
+        function resetView() {
+            viewScanning.style.style.display = 'none';
+            viewInitial.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
